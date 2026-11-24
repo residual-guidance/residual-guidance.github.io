@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Residual Guidance</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <meta name="description" content="Residual Guidance for Real-Time Interactive Video Generation">
+  <meta property="og:title" content="Residual Guidance for Real-Time Interactive Video Generation">
+  <meta property="og:description" content="A training-free method that makes streaming video models follow prompt changes.">
+  <meta property="og:image" content="assets/posters/cubes_spheres.jpg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;0,900;1,400&family=Source+Code+Pro:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+          onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}]})"></script>
+
+  <style>
+    :root {
+      --bg: #0f1012;
+      --bg-2: #17181c;
+      --bg-3: #1f2126;
+      --line: #2a2c32;
+      --text: #ececee;
+      --text-2: #a9acb4;
+      --muted: #74777f;
+      --ours: #f0a23b;   /* same orange as the "Ours" frame in the videos */
+      --ours-tint: rgba(240, 162, 59, .07);
+      --ours-ink: #f0a23b;      /* orange used for text */
+      --on-ours: #1a1208;
+      --rule: #8e919a;          /* table rules */
+      --box-stroke: #464a53;
+      --arrow: #868992;
+      --base-bar: #4a4d55;
+      --btn-border: #33363d;
+      --btn-hover: #2a2d33;
+      --btn-hover-border: #454952;
+      --title-grad: linear-gradient(90deg, #ffb35c 0%, #ff7a8a 50%, #b48cff 100%);
+      --vid-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 24px 60px -24px rgba(0, 0, 0, .8);
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Lato", "Helvetica Neue", Arial, sans-serif;
+      font-size: 17px;
+      line-height: 1.75;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--ours-ink); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    img, video, svg { display: block; max-width: 100%; }
+    .container { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+    .wide { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+    .text { max-width: 800px; }
+    @media (max-width: 600px) {
+      .container, .wide { padding: 0 16px; }
+      body { font-size: 16px; }
+    }
+
+    /* header */
+    header { text-align: center; }
+    header.container { padding-top: 96px; }
+    h1 { font-size: 50px; font-weight: 900; line-height: 1.15; margin: 0 auto 28px; max-width: 900px; letter-spacing: -.015em; }
+    h1 .rg {
+      background: var(--title-grad);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    @media (max-width: 600px) { header.container { padding-top: 56px; } h1 { font-size: 31px; } }
+    .authors { font-size: 20px; margin: 0; line-height: 1.6; }
+    .authors span { margin: 0 12px; white-space: nowrap; }
+    .authors a { color: var(--text); }
+    .authors a:hover { color: var(--ours-ink); text-decoration: none; }
+    .affil { color: var(--text-2); font-size: 17px; margin: 6px 0 30px; }
+    .affil span { margin: 0 12px; white-space: nowrap; }
+    sup { font-size: .6em; color: var(--text-2); }
+    .links { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+    .links a {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 20px; border-radius: 999px;
+      background: var(--bg-3); color: var(--text); border: 1px solid var(--btn-border);
+      font-weight: 700; font-size: 15px;
+      transition: background .15s;
+    }
+    .links a:hover { background: var(--btn-hover); border-color: var(--btn-hover-border); text-decoration: none; }
+    .links a.off { color: var(--muted); pointer-events: none; }
+    .links svg { width: 17px; height: 17px; }
+
+    /* video */
+    .vid { background: #131418; border-radius: 10px; overflow: hidden; aspect-ratio: 1740 / 728; box-shadow: var(--vid-shadow); }
+    .vid video { width: 100%; height: 100%; }
+    .hero { margin-top: 56px; }
+    .caption { color: var(--text-2); font-size: 15px; margin: 14px 0 0; text-align: center; }
+    .tldr { font-size: 20px; line-height: 1.65; margin: 48px auto 0; max-width: 800px; text-align: center; color: var(--text-2); }
+    .tldr b { color: var(--text); }
+
+    /* sections */
+    section { padding-top: 88px; }
+    h2 { font-size: 30px; font-weight: 900; margin: 0 0 24px; letter-spacing: -.01em; }
+    h3 { font-size: 19px; font-weight: 700; margin: 40px 0 12px; }
+    p { margin: 0 0 16px; }
+    .abstract { color: var(--text-2); text-align: justify; hyphens: auto; }
+    .abstract b { color: var(--text); }
+    @media (max-width: 600px) { .abstract { text-align: left; } }
+    .hl { color: var(--ours-ink); font-weight: 700; }
+    .sec-intro { color: var(--text-2); margin: -8px 0 28px; }
+
+    /* summary */
+    dl.summary { display: grid; grid-template-columns: 130px 1fr; margin: 0; border-top: 1px solid var(--line); }
+    dl.summary dt, dl.summary dd { padding: 20px 0; border-bottom: 1px solid var(--line); margin: 0; }
+    dl.summary dt { font-weight: 900; color: var(--ours-ink); text-transform: uppercase; font-size: 12.5px; letter-spacing: .12em; padding-top: 25px; }
+    dl.summary dd { color: var(--text-2); }
+    dl.summary dd b { color: var(--text); }
+    .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+    .nums > div { border-left: 2px solid var(--line); padding-left: 14px; }
+    .nums .n { font-size: 30px; font-weight: 900; color: var(--text); line-height: 1.2; white-space: nowrap; }
+    .nums .n .from { color: var(--muted); font-weight: 400; }
+    .nums .n .arrow { color: var(--muted); font-weight: 300; margin: 0 6px; }
+    .nums .n .to { color: var(--ours-ink); }
+    .nums .l { font-size: 14px; color: var(--muted); line-height: 1.45; margin-top: 4px; }
+    @media (max-width: 600px) {
+      dl.summary { grid-template-columns: 1fr; }
+      dl.summary dt { border-bottom: 0; padding-bottom: 0; }
+      .nums { grid-template-columns: 1fr; }
+      .nums .n { font-size: 26px; }
+    }
+
+    /* demo player */
+    .player-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 16px 2px 0; }
+    .player-head .t { font-weight: 700; font-size: 18px; }
+    .player-head .m { color: var(--muted); font-size: 14.5px; }
+    .groups { display: grid; grid-template-columns: repeat(3, auto); gap: 28px 32px; margin-top: 36px; justify-content: start; }
+    .group-label { font-size: 12.5px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .thumbs { display: grid; grid-template-columns: repeat(var(--cols), 140px); gap: 10px; }
+    .thumb {
+      appearance: none; padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+      color: var(--text-2); font: inherit; font-size: 13px; line-height: 1.35;
+    }
+    .thumb img { width: 100%; aspect-ratio: 571 / 328; object-fit: cover; border-radius: 6px; outline: 2px solid transparent; outline-offset: 2px; opacity: .72; transition: opacity .15s, outline-color .15s; }
+    .thumb span { display: block; margin-top: 7px; }
+    .thumb:hover img { opacity: 1; }
+    .thumb:hover span { color: var(--text); }
+    .thumb.on img { opacity: 1; outline-color: var(--ours); }
+    .thumb.on span { color: var(--text); font-weight: 700; }
+    @media (max-width: 1100px) {
+      .groups { grid-template-columns: 1fr; }
+      .thumbs { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    }
+    @media (max-width: 600px) { .thumbs { grid-template-columns: repeat(2, 1fr); } }
+
+    /* tables */
+    .tw { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 15px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 8px 14px; text-align: center; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    thead tr:first-child th { border-top: 2px solid var(--rule); }
+    thead tr:last-child th { border-bottom: 1px solid var(--rule); }
+    thead th { font-weight: 700; color: var(--text); }
+    thead th.grp { border-bottom: 1px solid var(--line); }
+    tbody tr:last-child td { border-bottom: 2px solid var(--rule); }
+    th.rg, td.rg { background: var(--ours-tint); }
+    td.rg { color: var(--ours-ink); font-weight: 700; }
+    td.na { color: var(--muted); }
+    tr.sep td { border-top: 1px solid var(--line); }
+    tr.ours td { color: var(--ours-ink); font-weight: 700; background: var(--ours-tint); }
+    .tcap { color: var(--text-2); font-size: 14.5px; line-height: 1.65; margin: 12px 0 0; }
+    .tcap b { color: var(--text); }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; margin-top: 8px; }
+    @media (max-width: 820px) { .split { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+    .split p { color: var(--text-2); }
+    .split p b { color: var(--text); }
+
+    /* method */
+    .panel { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 26px 24px 22px; margin: 4px 0 32px; }
+    .dscroll { overflow-x: auto; }
+    .diagram { width: 100%; height: auto; min-width: 720px; }
+    .diagram text { font-family: "Lato", sans-serif; fill: var(--text); }
+    .diagram .b { fill: var(--bg-3); stroke: var(--box-stroke); stroke-width: 1.2; }
+    .diagram .bd { fill: var(--bg-3); stroke: var(--ours); stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .diagram .bo { fill: var(--ours); }
+    .diagram .ln { stroke: var(--arrow); stroke-width: 1.4; fill: none; }
+    .diagram .lo { stroke: var(--ours); stroke-width: 1.8; fill: none; }
+    .diagram .t1 { font-size: 15px; font-weight: 700; }
+    .diagram .t2 { font-size: 12.5px; fill: var(--text-2); }
+    .diagram .t3 { font-size: 11.5px; font-weight: 900; letter-spacing: .1em; fill: var(--muted); }
+    .diagram .dark { fill: var(--on-ours); }
+    .eq { overflow-x: auto; overflow-y: hidden; }
+    .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+    @media (max-width: 820px) { .steps { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
+    .steps p { color: var(--text-2); }
+    .steps p b { color: var(--text); }
+    .steps .katex-display { margin: 10px 0 14px; }
+
+    /* user study */
+    .us { max-width: 800px; }
+    .us-legend { display: flex; gap: 20px; font-size: 14px; color: var(--text-2); margin: 0 0 14px 170px; }
+    .us-legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .us-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .sw-rg { background: var(--ours); }
+    .sw-base { background: var(--base-bar); }
+    .us-row { display: grid; grid-template-columns: 160px 1fr; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .us-label { font-weight: 700; font-size: 15.5px; line-height: 1.3; }
+    .us-label small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .us-bar { position: relative; display: flex; gap: 2px; height: 34px; }
+    .us-bar .seg { display: flex; align-items: center; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+    .us-bar .seg.rg { background: var(--ours); color: var(--on-ours); border-radius: 4px 0 0 4px; padding-left: 10px; }
+    .us-bar .seg.base { background: var(--base-bar); color: var(--text); border-radius: 0 4px 4px 0; justify-content: flex-end; padding-right: 10px; }
+    .us-bar .mid { position: absolute; left: 50%; top: -5px; bottom: -5px; border-left: 1.5px dashed var(--text); opacity: .55; pointer-events: none; }
+    .us-axis { display: grid; grid-template-columns: 160px 1fr; gap: 10px; }
+    .us-axis div { position: relative; height: 18px; font-size: 12px; color: var(--muted); }
+    .us-axis div span { position: absolute; transform: translateX(-50%); }
+    .us-axis div span:first-child { transform: none; }
+    .us-axis div span:last-child { transform: translateX(-100%); }
+    @media (max-width: 600px) {
+      .us-legend { margin-left: 0; }
+      .us-row, .us-axis { grid-template-columns: 1fr; gap: 6px; }
+      .us-axis > span { display: none; }
+      .us-row { margin-bottom: 16px; }
+    }
+
+    pre.bib {
+      background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+      padding: 18px 20px; overflow-x: auto; margin: 0;
+      font-family: "Source Code Pro", ui-monospace, monospace; font-size: 13.5px; line-height: 1.65; color: var(--text-2);
+    }
+    footer { color: var(--muted); font-size: 14px; padding: 72px 0 44px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<header class="container">
+  <h1><span class="rg">Residual Guidance</span> for Real-Time Interactive Video Generation</h1>
+  <p class="authors">
+    <span><a href="https://nahyeonkaty.github.io" target="_blank" rel="noopener">NaHyeon Park</a><sup>1</sup></span>
+    <span>Kyeong-Hwan Moon<sup>2</sup></span>
+    <span>Youjin Jeon<sup>1</sup></span>
+    <span>Hyunjung Shim<sup>1</sup></span>
+  </p>
+  <p class="affil"><span><sup>1</sup>KAIST</span><span><sup>2</sup>POSTECH</span></p>
+  <div class="links">
+    <a href="assets/residual_guidance.pdf" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      Paper
+    </a>
+    <!-- TODO: add the arXiv link and remove class="off" -->
+    <a class="off" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9l3 3-3 3M13 15h3"/></svg>
+      arXiv (coming soon)
+    </a>
+    <a href="https://github.com/nahyeonkaty/residual-guidance" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
+      Code
+    </a>
+  </div>
+</header>
+
+<div class="wide hero">
+  <div class="vid">
+    <video src="demos/cubes_spheres.mp4" poster="assets/posters/cubes_spheres.jpg" autoplay muted loop playsinline preload="auto"></video>
+  </div>
+  <p class="caption">The prompt changes from a set of 3D cubes to a set of 3D spheres at 2.1&nbsp;s. Left: LongLive with KV re-caching. Right: LongLive with Residual Guidance.</p>
+</div>
+
+<div class="container">
+  <p class="tldr">Streaming video models often keep generating the old prompt after the user changes it. We trace this to the cached frames themselves and propose <span class="hl">Residual Guidance</span>, a <b>training-free</b> correction that adds <b>one forward pass</b> per chunk.</p>
+
+  <!-- Abstract -->
+  <section>
+    <h2>Abstract</h2>
+    <p class="abstract">
+      Real-time interactive video generation allows users to change the prompt during generation to steer the evolving video.
+      However, existing streaming models, which generate videos chunk by chunk, often keep following the previous prompt after a switch.
+      We trace this failure to <b>context inertia</b>, where the previous chunk acts as a strong prior that suppresses the new prompt.
+      Furthermore, we find that this inertia persists even when the cache retains only the previous chunk, yet discarding the context breaks visual continuity, which limits approaches that edit the cache.
+      Rather than editing the cache, we propose <b>Residual Guidance (RG)</b>, a simple, training-free method that counteracts context inertia with a correction measured outside the cache.
+      Specifically, RG denoises the re-noised previous chunk once under the new prompt without the cache and adds the resulting residual to the early denoising steps of the next chunk, where its content is largely decided and the new prompt is most suppressed.
+      Across settings ranging from a single switch to long multi-switch generation, RG substantially improves prompt switching capability on existing streaming models, including those with dedicated switching mechanisms, while largely retaining visual quality.
+      As it requires no training or per-model tuning and adds only one forward pass per chunk, RG can be easily integrated into existing real-time video generation pipelines.
+    </p>
+  </section>
+
+  <!-- Summary -->
+  <section>
+    <h2>Summary</h2>
+    <dl class="summary">
+      <dt>Problem</dt>
+      <dd>When the prompt changes mid-stream, the new prompt often never shows up. On 100 switches, <b>80%</b> (Self Forcing) and <b>64%</b> (LongLive) are never realized within 5&nbsp;s.</dd>
+      <dt>Cause</dt>
+      <dd>The cached <b>frames</b>, not stale prompt information, suppress the new prompt. With the full cache only <b>18%</b> of the context-free prompt response remains, a single cached chunk is already enough to suppress it, and the effect is strongest at the <b>first denoising step</b>.</dd>
+      <dt>Method</dt>
+      <dd>Re-noise the previous chunk, denoise it once under the new prompt with an <b>empty cache</b>, and add the difference to the next chunk's prediction at the first two denoising steps. The cache itself is not modified, so it works on top of any cache strategy.</dd>
+      <dt>Results</dt>
+      <dd>
+        Average switch achievement over the baselines, without and with RG. Raters preferred RG in <b>70.7%</b> of comparisons, at about 6% lower throughput.
+        <div class="nums">
+          <div><div class="n"><span class="from">21%</span><span class="arrow">→</span><span class="to">58%</span></div><div class="l">single-attribute switch<br>T2V-CompBench, 5&nbsp;s</div></div>
+          <div><div class="n"><span class="from">47%</span><span class="arrow">→</span><span class="to">66%</span></div><div class="l">three-event stories<br>StoryEval, 10&nbsp;s</div></div>
+          <div><div class="n"><span class="from">66%</span><span class="arrow">→</span><span class="to">81%</span></div><div class="l">six prompts<br>InteractiveBench, 60&nbsp;s</div></div>
+        </div>
+      </dd>
+    </dl>
+  </section>
+</div>
+
+<!-- Demos -->
+<section id="demos">
+  <div class="container">
+    <h2>Demo Videos</h2>
+    <p class="sec-intro text">Left: the base model with a naive prompt switch. Right (orange frame): the same model and seed with RG. The bar under each video shows which prompt is active. Pick a clip below.</p>
+  </div>
+  <div class="wide">
+    <div class="vid"><video id="player" muted loop playsinline controls autoplay preload="auto"></video></div>
+    <div class="player-head"><span class="t" id="player-title"></span><span class="m" id="player-meta"></span></div>
+    <div class="groups" id="groups"></div>
+  </div>
+</section>
+
+<div class="container">
+  <!-- Context inertia -->
+  <section>
+    <h2>Context Inertia</h2>
+    <p class="text sec-intro">To see why switches fail, we fix the noisy input of the switch chunk and measure how much the new prompt moves the prediction under a visible context \(\mathcal{C}\), relative to how much it moves it with no context at all.</p>
+    <div class="eq">\[ \rho(\mathcal{C}) = \frac{\lVert \hat{x}(\mathcal{C}, y_\text{new}) - \hat{x}(\mathcal{C}, y_\text{old}) \rVert}{\lVert \hat{x}(\varnothing, y_\text{new}) - \hat{x}(\varnothing, y_\text{old}) \rVert} \]</div>
+    <div class="split">
+      <div>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr><th>Visible context</th><th>Self Forcing</th><th>LongLive</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Full cache</td><td>0.18</td><td>0.27</td></tr>
+              <tr><td>Previous chunk only</td><td>0.28</td><td>0.42</td></tr>
+              <tr><td>Oldest chunk only</td><td>0.59</td><td>0.53</td></tr>
+              <tr><td>No context</td><td>1.00</td><td>1.00</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="tcap">Relative prompt response \(\rho\) at the first denoising step. LongLive is re-cached under the new prompt before measuring.</p>
+      </div>
+      <div>
+        <p><b>The cached content suppresses the new prompt.</b> Even a single cached chunk removes most of the prompt response, and since LongLive is re-cached first, stale prompt information is not the cause. Removing the context entirely does realize the switch, but changes the subject and background.</p>
+        <p><b>It is strongest at the first step.</b> Without context, the prompt switch changes the clean prediction by 0.62 (relative to \(\lVert s_{k-1} \rVert\)) at step 1, but only 0.19 at step 2 and 0.03 at step 4. This suggests measuring the prompt signal <i>without</i> the cache and applying it early.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Method -->
+  <section>
+    <h2>Method</h2>
+    <div class="panel">
+      <div class="dscroll">
+        <svg class="diagram" viewBox="0 0 960 290" role="img" aria-label="Residual Guidance overview: the previous chunk is re-noised and denoised once under the new prompt with an empty cache; its difference from the original chunk is added to the next chunk's prediction.">
+          <defs>
+            <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--arrow)"/></marker>
+            <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--ours)"/></marker>
+          </defs>
+
+          <text class="t3" x="10" y="18">RESIDUAL ESTIMATION · NO CACHE</text>
+          <rect class="b" x="10" y="34" width="140" height="58" rx="6"/>
+          <text class="t1" x="80" y="60" text-anchor="middle">s<tspan font-size="11" dy="4">k−1</tspan></text>
+          <text class="t2" x="80" y="80" text-anchor="middle">previous chunk</text>
+          <line class="ln" x1="150" y1="63" x2="186" y2="63" marker-end="url(#a)"/>
+          <rect class="b" x="188" y="34" width="150" height="58" rx="6"/>
+          <text class="t1" x="263" y="60" text-anchor="middle">re-noise</text>
+          <text class="t2" x="263" y="80" text-anchor="middle">τ = 850</text>
+          <line class="ln" x1="338" y1="63" x2="374" y2="63" marker-end="url(#a)"/>
+          <rect class="bd" x="376" y="34" width="220" height="58" rx="6"/>
+          <text class="t1" x="486" y="60" text-anchor="middle">denoise once</text>
+          <text class="t2" x="486" y="80" text-anchor="middle">y<tspan font-size="9" dy="3">new</tspan><tspan dy="-3">, empty cache</tspan></text>
+          <line class="ln" x1="596" y1="63" x2="634" y2="63" marker-end="url(#a)"/>
+          <circle cx="652" cy="63" r="16" stroke-width="1.4" style="fill:var(--bg-3);stroke:var(--arrow)"/>
+          <text x="652" y="69" text-anchor="middle" style="font-size:18px;font-weight:700">−</text>
+          <path class="ln" d="M80 92 V118 H652 V81" marker-end="url(#a)"/>
+          <line class="lo" x1="668" y1="63" x2="708" y2="63" marker-end="url(#ao)"/>
+          <rect class="bo" x="710" y="34" width="120" height="58" rx="6"/>
+          <text class="t1 dark" x="770" y="60" text-anchor="middle">r<tspan font-size="11" dy="4">k</tspan></text>
+          <text class="t2 dark" x="770" y="80" text-anchor="middle">residual</text>
+
+          <path class="lo" d="M770 92 V217" marker-end="url(#ao)"/>
+          <text class="t2" x="782" y="160" style="fill:var(--ours)">× λ<tspan font-size="9" dy="3">i</tspan><tspan dy="-3">  (1, 0.5, 0, 0)</tspan></text>
+
+          <text class="t3" x="10" y="176">NEXT CHUNK · FULL CACHE</text>
+          <rect class="b" x="10" y="206" width="140" height="58" rx="6"/>
+          <text class="t1" x="80" y="232" text-anchor="middle">x<tspan font-size="11" dy="4">k</tspan></text>
+          <text class="t2" x="80" y="252" text-anchor="middle">noisy chunk k</text>
+          <line class="ln" x1="150" y1="235" x2="186" y2="235" marker-end="url(#a)"/>
+          <rect class="b" x="188" y="194" width="408" height="82" rx="6"/>
+          <text class="t1" x="392" y="226" text-anchor="middle">streaming denoiser</text>
+          <text class="t2" x="392" y="248" text-anchor="middle">y<tspan font-size="9" dy="3">new</tspan><tspan dy="-3">, full KV cache C</tspan><tspan font-size="9" dy="3">&lt;k</tspan><tspan dy="-3"> (unchanged)</tspan></text>
+          <line class="ln" x1="596" y1="235" x2="750" y2="235" marker-end="url(#a)"/>
+          <circle cx="770" cy="235" r="18" stroke-width="1.8" style="fill:var(--bg-3);stroke:var(--ours)"/>
+          <text x="770" y="242" text-anchor="middle" style="font-size:20px;font-weight:700;fill:var(--ours)">+</text>
+          <line class="lo" x1="788" y1="235" x2="826" y2="235" marker-end="url(#ao)"/>
+          <rect class="b" x="828" y="206" width="122" height="58" rx="6" style="stroke:var(--ours)"/>
+          <text class="t1" x="889" y="232" text-anchor="middle">x̂<tspan font-size="11" dy="4">k</tspan></text>
+          <text class="t2" x="889" y="252" text-anchor="middle">output</text>
+        </svg>
+      </div>
+    </div>
+    <div class="steps">
+      <div>
+        <p><b>Residual estimation.</b> The previous chunk \(s_{k-1}\) is re-noised to level \(\tau\) and denoised once under the new prompt with an empty KV cache. Its difference from the original chunk is the residual:</p>
+        <div class="eq">\[ r_k = \hat{x}_\theta\big(\tilde{x}^{\tau}_{k-1} \,\big|\, \varnothing,\, y_\text{new}\big) - s_{k-1} \]</div>
+        <p>Because no cache is involved, the residual is not suppressed by context inertia. It moves away from the previous content and toward the new prompt. The noise level \(\tau\) controls its strength, similar to a guidance scale.</p>
+      </div>
+      <div>
+        <p><b>Residual injection.</b> The residual is added to the cache-conditioned prediction of the next chunk at the early denoising steps:</p>
+        <div class="eq">\[ \hat{x}^{(i)}_k = \hat{x}_\theta\big(x^{t_i}_k \,\big|\, \mathcal{C}_{&lt;k},\, y_\text{new}\big) + \lambda_i\, r_k \]</div>
+        <p>With \(\lambda = (1, 0.5, 0, 0)\), the later steps run unchanged with the full cache, which keeps the subject and scene consistent. We use τ&nbsp;=&nbsp;850 for every model, and since the cache is untouched, RG combines with re-caching, cache flushing, anchors or memory retrieval.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section>
+    <h2>Results</h2>
+    <div class="tw">
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2" style="vertical-align:bottom;border-bottom:1px solid var(--rule)">Model</th>
+            <th class="grp" colspan="2">T2V-CompBench (5 s)</th>
+            <th class="grp" colspan="2">StoryEval (10 s)</th>
+            <th class="grp" colspan="2">InteractiveBench (60 s)</th>
+          </tr>
+          <tr><th>Base</th><th class="rg">+ RG</th><th>Base</th><th class="rg">+ RG</th><th>Base</th><th class="rg">+ RG</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Self Forcing</td><td>0.106</td><td class="rg">0.568</td><td class="na">–</td><td class="rg na">–</td><td class="na">–</td><td class="rg na">–</td></tr>
+          <tr><td>Causal Forcing</td><td>0.147</td><td class="rg">0.558</td><td class="na">–</td><td class="rg na">–</td><td class="na">–</td><td class="rg na">–</td></tr>
+          <tr><td>MemFlow</td><td>0.210</td><td class="rg">0.493</td><td>0.385</td><td class="rg">0.659</td><td>0.587</td><td class="rg">0.724</td></tr>
+          <tr><td>LongLive</td><td>0.296</td><td class="rg">0.622</td><td>0.511</td><td class="rg">0.687</td><td>0.631</td><td class="rg">0.826</td></tr>
+          <tr><td>Infinity-RoPE</td><td>0.148</td><td class="rg">0.578</td><td>0.402</td><td class="rg">0.586</td><td>0.609</td><td class="rg">0.783</td></tr>
+          <tr><td>Anchor Forcing</td><td>0.328</td><td class="rg">0.606</td><td>0.538</td><td class="rg">0.732</td><td>0.765</td><td class="rg">0.871</td></tr>
+          <tr><td>SWIFT</td><td>0.252</td><td class="rg">0.667</td><td>0.505</td><td class="rg">0.654</td><td>0.693</td><td class="rg">0.823</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tcap text"><b>Switch achievement</b>, the fraction of prompt switches that a VLM judge finds realized in the video. All models are distilled from Wan2.1-1.3B and use the same RG configuration. VBench quality stays within 0.01 of the base model in every setting.</p>
+
+    <h3>Comparison with simpler alternatives</h3>
+    <div class="split">
+      <div>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr><th>Self Forcing</th><th>Achv. ↑</th><th>Quality ↑</th><th>Unint. ↓</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Base model</td><td>0.130</td><td>0.789</td><td>0.026</td></tr>
+              <tr><td>No context (all steps)</td><td>1.000</td><td>0.726</td><td>0.191</td></tr>
+              <tr><td>No context (step 1)</td><td>0.948</td><td>0.803</td><td>0.165</td></tr>
+              <tr><td>CFG (w = 3)</td><td>0.234</td><td>0.793</td><td>0.033</td></tr>
+              <tr><td>Text-only residual</td><td>0.351</td><td>0.788</td><td>0.037</td></tr>
+              <tr class="ours sep"><td>RG (ours)</td><td>0.623</td><td>0.788</td><td>0.089</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="tcap">100 dynamic-attribute pairs. Unint.: DreamSim distance across the switch with the changed object masked out.</p>
+      </div>
+      <div>
+        <p><b>Dropping the context</b> realizes most switches but changes 1.9 to 3.5 times more of the rest of the scene than RG.</p>
+        <p><b>Stronger CFG</b> keeps continuity, but its direction is computed under the same cache, so it is suppressed as well.</p>
+        <p><b>A text-only residual</b>, which keeps only the prompt-dependent part, recovers about half of the gain. Moving away from the cached content matters as much as moving toward the new prompt.</p>
+      </div>
+    </div>
+
+    <h3>User study</h3>
+    <div class="us">
+      <div class="us-legend"><span><i class="sw-rg"></i>+ RG</span><span><i class="sw-base"></i>Base model</span></div>
+      <div class="us-row">
+        <div class="us-label">Adherence<small>follows the new prompt</small></div>
+        <div class="us-bar"><div class="seg rg" style="width:73.1%" title="+ RG: 73.1%">73.1%</div><div class="seg base" style="width:26.9%" title="Base model: 26.9%">26.9%</div><div class="mid"></div></div>
+      </div>
+      <div class="us-row">
+        <div class="us-label">Overall<small>preferred for real-time use</small></div>
+        <div class="us-bar"><div class="seg rg" style="width:70.7%" title="+ RG: 70.7%">70.7%</div><div class="seg base" style="width:29.3%" title="Base model: 29.3%">29.3%</div><div class="mid"></div></div>
+      </div>
+      <div class="us-row">
+        <div class="us-label">Consistency<small>no unwanted change</small></div>
+        <div class="us-bar"><div class="seg rg" style="width:44.3%" title="+ RG: 44.3%">44.3%</div><div class="seg base" style="width:55.7%" title="Base model: 55.7%">55.7%</div><div class="mid"></div></div>
+      </div>
+      <div class="us-axis"><span></span><div><span style="left:0">0%</span><span style="left:50%">50%</span><span style="left:100%">100%</span></div></div>
+    </div>
+    <p class="tcap text">Pairwise preference from 20 raters comparing each base model with and without RG on the same prompt pair, averaged over base models. RG is clearly preferred for following the new prompt and overall, with consistency slightly below parity.</p>
+  </section>
+
+  <!-- BibTeX -->
+  <section>
+    <h2>BibTeX</h2>
+<pre class="bib">@article{park2026residual,
+  title   = {Residual Guidance for Real-Time Interactive Video Generation},
+  author  = {Park, NaHyeon and Moon, Kyeong-Hwan and Jeon, Youjin and Shim, Hyunjung},
+  journal = {arXiv preprint},
+  year    = {2026}
+}</pre>
+  </section>
+
+  <footer>Last updated November 2026.</footer>
+</div>
+
+<script>
+  const GROUPS = [
+    {
+      label: "Attribute switch",
+      items: [
+        ["blue_ink_water", "Clear → blue-ink water", "Glass of water → water tinted blue by ink", "MemFlow"],
+        ["rainbow_wall",   "Red → rainbow wall", "Red brick wall → rainbow brick wall", "MemFlow"],
+        ["color_path",     "Glowing rainbow path", "Concrete path → path glowing in rainbow colors", "Infinity-RoPE"],
+        ["voxel_man",      "Voxel cuboid → man", "Voxel cuboid → man-shaped voxel figure", "Self Forcing"],
+        ["cubes_spheres",  "Cubes → spheres", "3D cubes → 3D spheres", "LongLive (KV recache)"],
+        ["dolphin_boat",   "Dolphin + boat", "Dolphin leaping → dolphin with a boat gliding by", "MemFlow"]
+      ]
+    },
+    {
+      label: "Multi-event story",
+      items: [
+        ["bear_picnic", "Bear at a picnic", "Bear sniffs a picnic basket → takes out food → runs away", "MemFlow"],
+        ["water_river", "Water → river → boat", "Glass of water spills → forms a small river → a toy boat sails on it", "SWIFT"]
+      ]
+    },
+    {
+      label: "Scene cut",
+      items: [
+        ["corgi_scene_cut", "Corgi, three scenes", "Beach → riding a wave → snowy summit", "Infinity-RoPE (RoPE scene cut)"],
+        ["owl_scene_cut", "Owl, three scenes", "Moonlit forest → old library → snowy mountain peak", "Infinity-RoPE (RoPE scene cut)"]
+      ]
+    }
+  ];
+
+  const player = document.getElementById("player");
+  const title = document.getElementById("player-title");
+  const meta = document.getElementById("player-meta");
+  const groupsEl = document.getElementById("groups");
+
+  function select(btn, [file, , full, model], kind) {
+    groupsEl.querySelectorAll(".thumb").forEach(b => b.classList.toggle("on", b === btn));
+    player.poster = `assets/posters/${file}.jpg`;
+    player.src = `demos/${file}.mp4`;
+    player.play().catch(() => {});
+    title.textContent = full;
+    meta.textContent = `${kind} · ${model}`;
+  }
+
+  let first = null;
+  for (const g of GROUPS) {
+    const col = document.createElement("div");
+    col.innerHTML = `<div class="group-label">${g.label}</div><div class="thumbs" style="--cols:${Math.min(g.items.length, 3)}"></div>`;
+    const grid = col.querySelector(".thumbs");
+    for (const item of g.items) {
+      const b = document.createElement("button");
+      b.className = "thumb";
+      b.type = "button";
+      b.innerHTML = `<img src="assets/thumbs/${item[0]}.jpg" alt=""><span>${item[1]}</span>`;
+      b.addEventListener("click", () => select(b, item, g.label));
+      grid.appendChild(b);
+      if (!first) first = () => select(b, item, g.label);
+    }
+    groupsEl.appendChild(col);
+  }
+  first();
+
+  // Pause the demo player while it is off screen.
+  new IntersectionObserver(([e]) => {
+    if (e.isIntersecting) player.play().catch(() => {});
+    else player.pause();
+  }, { threshold: 0.3 }).observe(player);
+</script>
+</body>
+</html>
